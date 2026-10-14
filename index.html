@@ -39,6 +39,13 @@ button:hover,button:focus-visible{background:var(--acc);color:var(--ink);outline
 .z{position:absolute;top:0;bottom:0;width:33%;z-index:2}
 #zl{left:0}#zr{right:0}
 #ld{position:absolute;inset:auto 0 12px;text-align:center;color:var(--acc);pointer-events:none}
+#fp{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;z-index:20;place-items:center}
+#fp.on{display:grid}
+#fb{background:var(--bg);border:3px solid var(--ink);border-radius:6px;width:min(560px,94vw);max-height:86vh;display:flex;flex-direction:column;padding:16px;gap:10px}
+#fl{overflow:auto;flex:1;min-height:200px;display:flex;flex-direction:column;gap:4px}
+#fl button{text-align:left}
+#fc{color:var(--mut);font-size:13px}
+.fa{display:flex;gap:8px;justify-content:flex-end}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -46,11 +53,19 @@ button:hover,button:focus-visible{background:var(--acc);color:var(--ink);outline
 <header>
   <h1>Prateleira de HQs</h1>
   <input id="q" type="search" placeholder="Buscar quadrinho" aria-label="Buscar quadrinho">
+  <button id="pick" hidden>Escolher pasta</button>
   <button id="reload" hidden>Atualizar lista</button>
   <button id="login">Entrar com Google</button>
 </header>
 <div id="msg">Entre com sua conta Google para ver os quadrinhos do seu Drive.</div>
 <main id="shelf"></main>
+
+<div id="fp"><div id="fb">
+  <strong>Escolha a pasta dos quadrinhos</strong>
+  <input id="fi" placeholder="Ou cole aqui o link ou o ID da pasta">
+  <div id="fc"></div><div id="fl"></div>
+  <div class="fa"><button id="fcancel">Cancelar</button><button id="fuse">Usar esta pasta</button></div>
+</div></div>
 
 <div id="rd" role="dialog" aria-label="Leitor">
   <div id="top">
@@ -67,8 +82,8 @@ button:hover,button:focus-visible{background:var(--acc);color:var(--ink);outline
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 /* ===== CONFIGURAÇÃO ===== */
-const CLIENT_ID = '8937921951-30cpfpnngt9iioogr153vis0c0d42f6i.apps.googleusercontent.com';
-const FOLDER_ID = ''; // opcional: ID de uma pasta do Drive. Vazio = procura no Drive inteiro.
+const CLIENT_ID = 'COLE_SEU_CLIENT_ID.apps.googleusercontent.com';
+const FOLDER_ID = ''; // opcional: pasta padrão. Você também pode escolher pelo botão "Escolher pasta".
 /* ======================== */
 
 const $ = s => document.querySelector(s);
@@ -80,7 +95,7 @@ const mime = n => 'image/' + ({jpg: 'jpeg'}[ext(n)] || ext(n));
 const mb = n => (n / 1048576).toFixed(n > 1e8 ? 0 : 1) + ' MB';
 const ls = {get: k => { try { return localStorage.getItem(k) } catch { return null } },
             set: (k, v) => { try { localStorage.setItem(k, v) } catch {} }};
-let files = [], tok = null, exp = 0, tc;
+let files = [], tok = null, exp = 0, tc, folder = ls.get('folder') || FOLDER_ID, stack = [];
 zip.configure({useWebWorkers: false});
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
@@ -105,7 +120,7 @@ window.addEventListener('load', () => {
 });
 $('#login').onclick = async () => {
   if (!tc) return msg('Biblioteca do Google ainda carregando. Tente de novo.');
-  try { await auth(); $('#login').hidden = true; $('#reload').hidden = false; load(); }
+  try { await auth(); $('#login').hidden = true; $('#reload').hidden = false; $('#pick').hidden = false; folder ? load() : $('#pick').click(); }
   catch (e) { msg('Não foi possível entrar: ' + e.message + '. Confira o Client ID e as origens autorizadas.'); }
 };
 $('#reload').onclick = () => load();
@@ -147,15 +162,41 @@ async function whole(f) {
   return buf;
 }
 async function load() {
-  msg('Procurando quadrinhos…'); $('#shelf').innerHTML = '';
+  $('#shelf').innerHTML = '';
+  if (!folder) return msg('Clique em "Escolher pasta" para selecionar onde estão seus quadrinhos.');
+  msg('Procurando quadrinhos…');
   try {
-    const all = FOLDER_ID ? await crawl(FOLDER_ID)
-      : await listAll("trashed=false and (mimeType='application/pdf' or name contains 'cbz' or name contains 'cbr')");
+    const all = await crawl(folder);
     files = all.filter(f => /^(cbz|cbr|pdf)$/.test(ext(f.name))).sort((a, b) => nat(a.name, b.name));
     msg(files.length ? '' : 'Nenhum CBZ, CBR ou PDF encontrado.');
     draw();
   } catch (e) { msg('Erro ao listar: ' + e.message); }
 }
+
+/* ---------- Escolher pasta ---------- */
+const fid = t => (t.match(/[-\w]{20,}/) || [''])[0];
+async function browse() {
+  const cur = stack[stack.length - 1];
+  $('#fc').textContent = stack.map(x => x.name).join(' / ');
+  $('#fl').textContent = 'Carregando…';
+  try {
+    const FQ = "mimeType='application/vnd.google-apps.folder' and trashed=false";
+    const d = (await listAll(cur.id === 'shared' ? 'sharedWithMe=true and ' + FQ : `'${cur.id}' in parents and ${FQ}`)).sort((a, b) => nat(a.name, b.name));
+    const box = $('#fl'); box.textContent = '';
+    const add = (t, fn) => { const b = document.createElement('button'); b.textContent = t; b.onclick = fn; box.append(b); };
+    if (stack.length > 1) add('↑ Voltar', () => { stack.pop(); browse(); });
+    if (stack.length === 1) add('Compartilhados comigo', () => { stack.push({id: 'shared', name: 'Compartilhados comigo'}); browse(); });
+    d.forEach(x => add(x.name, () => { stack.push({id: x.id, name: x.name}); browse(); }));
+    if (!d.length) box.append('Nenhuma subpasta aqui.');
+  } catch (e) { $('#fl').textContent = 'Erro: ' + e.message; }
+}
+$('#pick').onclick = () => { stack = [{id: 'root', name: 'Meu Drive'}]; $('#fi').value = ''; $('#fp').classList.add('on'); browse(); };
+$('#fcancel').onclick = () => $('#fp').classList.remove('on');
+$('#fuse').onclick = () => {
+  const id = fid($('#fi').value) || stack[stack.length - 1].id;
+  if (id === 'root' || id === 'shared') return $('#fc').textContent = 'Entre na pasta dos quadrinhos antes de clicar em "Usar esta pasta".';
+  folder = id; ls.set('folder', id); $('#fp').classList.remove('on'); load();
+};
 
 /* ---------- Prateleira ---------- */
 const obs = new IntersectionObserver(es => es.forEach(e => {
