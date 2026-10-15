@@ -171,8 +171,9 @@ const mk = o => Object.assign(Object.create(null), o);
 let files = [], tok = null, exp = 0, tc, folder = ls.get('folder') || FOLDER_ID, stack = [];
 let view = ls.get('view') || 'all', selMode = false, sel = new Set();
 let cats = mk(jget('cats', {})), later = new Set(jget('later', []));
-const saveCats = () => ls.set('cats', JSON.stringify(cats));
-const saveLater = () => ls.set('later', JSON.stringify([...later]));
+const touch = () => { ls.set('mt', Date.now()); push(); };
+const saveCats = () => { ls.set('cats', JSON.stringify(cats)); touch(); };
+const saveLater = () => { ls.set('later', JSON.stringify([...later])); touch(); };
 zip.configure({useWebWorkers: false});
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
@@ -206,6 +207,61 @@ const idb = (() => {
           set: (k, v) => tx('readwrite', s => s.put(v, k)).catch(() => {})};
 })();
 
+/* ---------- Sincronização via Drive (appDataFolder) ---------- */
+const SYNC = 'hq-estado.json', UP = 'https://www.googleapis.com/upload/drive/v3/files';
+let syncId = null, pt, dirty = false;
+const push = () => { clearTimeout(pt); pt = setTimeout(() => pushNow(), 2000); };
+function allProg() {
+  const o = {};
+  try { for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k.startsWith('p:')) { const v = jget(k, null); if (v) o[k.slice(2)] = v; }
+  } } catch {}
+  return o;
+}
+async function pushNow(gesture) {
+  if (!tok) return;
+  if (Date.now() >= exp - 60000 && !gesture) { dirty = true; return; } // token vencido: tenta no próximo toque
+  try {
+    const t = await auth(); dirty = false;
+    const body = JSON.stringify({v: 1, mt: +ls.get('mt') || Date.now(), folder, cats, later: [...later], prog: allProg()});
+    if (syncId) {
+      const r = await fetch(`${UP}/${syncId}?uploadType=media`, {method: 'PATCH', headers: {Authorization: 'Bearer ' + t, 'Content-Type': 'application/json'}, body});
+      if (!r.ok) throw new Error('Envio falhou (' + r.status + ')');
+    } else {
+      const bd = 'hqsync';
+      const mp = `--${bd}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({name: SYNC, parents: ['appDataFolder']})}\r\n--${bd}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${bd}--`;
+      const r = await fetch(`${UP}?uploadType=multipart&fields=id`, {method: 'POST', headers: {Authorization: 'Bearer ' + t, 'Content-Type': 'multipart/related; boundary=' + bd}, body: mp});
+      if (!r.ok) throw new Error('Criação falhou (' + r.status + ')');
+      syncId = (await r.json()).id;
+    }
+  } catch (e) { dirty = true; console.warn('Sync falhou:', e); }
+}
+async function pull() {
+  try {
+    const r = await api(`files?spaces=appDataFolder&fields=files(id)&q=${encodeURIComponent(`name='${SYNC}'`)}`);
+    syncId = r.files[0]?.id || null;
+    if (!syncId) { if (!ls.get('mt')) ls.set('mt', Date.now()); return pushNow(true); }
+    const d = await api(`files/${syncId}?alt=media`), lt = +ls.get('mt') || 0;
+    if (!lt) { // este aparelho nunca sincronizou: junta o que tem aqui com a nuvem
+      const mine = jget('cats', {});
+      cats = mk(d.cats || {});
+      for (const k of Object.keys(mine)) cats[k] = [...new Set([...(cats[k] || []), ...mine[k]])];
+      later = new Set([...(d.later || []), ...later]);
+    } else if ((d.mt || 0) > lt) { cats = mk(d.cats || {}); later = new Set(d.later || []); }
+    if (d.folder && (!folder || (d.mt || 0) > lt)) { folder = d.folder; ls.set('folder', folder); }
+    ls.set('cats', JSON.stringify(cats)); ls.set('later', JSON.stringify([...later]));
+    ls.set('mt', String(!lt ? Date.now() : Math.max(d.mt || 0, lt)));
+    for (const [id, v] of Object.entries(d.prog || {})) {
+      const l = jget('p:' + id, null);
+      if (!l || (v.t || 0) > (l.t || 0)) ls.set('p:' + id, JSON.stringify(v));
+    }
+    if (!lt || lt > (d.mt || 0)) pushNow(true);
+  } catch (e) { console.warn('Não consegui baixar o estado:', e); }
+}
+document.addEventListener('pointerdown', () => { if (dirty) pushNow(true); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) pushNow(); });
+
 /* ---------- Login ---------- */
 function auth() {
   return new Promise((ok, no) => {
@@ -222,7 +278,9 @@ window.addEventListener('load', () => {
     if (!window.google?.accounts) return;
     clearInterval(t);
     tc = google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID, scope: 'https://www.googleapis.com/auth/drive.readonly', callback: () => {}});
+      client_id: CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.appdata',
+      callback: () => {}});
   }, 100);
 });
 const msg = t => $('#msg').textContent = t;
@@ -232,16 +290,17 @@ function ui(on) {
 }
 $('#login').onclick = async () => {
   if (!tc) return msg('Biblioteca do Google ainda carregando. Tente de novo.');
-  try { await auth(); ui(true); folder ? load() : $('#pick').click(); }
+  try { await auth(); ui(true); msg('Sincronizando…'); await pull(); folder ? load() : $('#pick').click(); }
   catch (e) { msg('Não foi possível entrar: ' + e.message + '. Confira o Client ID e as origens autorizadas.'); }
 };
-$('#logout').onclick = () => {
+$('#logout').onclick = async () => {
+  await pushNow(true);
   if (tok) google.accounts.oauth2.revoke(tok, () => {});
-  tok = null; exp = 0; files = []; wait = [];
+  tok = null; exp = 0; files = []; wait = []; syncId = null;
   setSel(false); $('#shelf').innerHTML = ''; $('#cats').textContent = ''; ui(false);
   msg('Você saiu e o acesso ao Drive foi revogado. Entre de novo quando quiser.');
 };
-$('#reload').onclick = () => load();
+$('#reload').onclick = async () => { await pull(); load(); };
 
 /* ---------- Drive ---------- */
 async function api(path) {
@@ -316,7 +375,7 @@ $('#fcancel').onclick = () => $('#fp').classList.remove('on');
 $('#fuse').onclick = () => {
   const id = fid($('#fi').value) || stack[stack.length - 1].id;
   if (id === 'root' || id === 'shared') return $('#fc').textContent = 'Entre na pasta dos quadrinhos antes de clicar em "Usar esta pasta".';
-  folder = id; ls.set('folder', id); $('#fp').classList.remove('on'); load();
+  folder = id; ls.set('folder', id); touch(); $('#fp').classList.remove('on'); load();
 };
 
 /* ---------- Categorias e "Vou ler" ---------- */
@@ -638,7 +697,7 @@ async function show(i, exact) {
     im.src = u1; if (two) im2.src = u2; else im2.removeAttribute('src');
     $('#ct').textContent = two ? `${i + 1}–${i + 2} / ${b.n}` : `${i + 1} / ${b.n}`;
     $('#ld').textContent = ''; $('#pg').scrollTop = 0;
-    ls.set('p:' + cur.id, JSON.stringify({i: i + span - 1, n: b.n}));
+    ls.set('p:' + cur.id, JSON.stringify({i: i + span - 1, n: b.n, t: Date.now()})); push();
     if (i === 0) idb.get('c:' + cur.id).then(v => v || thumb(u1).then(d => idb.set('c:' + cur.id, d))).catch(() => {});
     for (let k = i + span; k < i + span + 4; k++) if (k < b.n) page(k).catch(() => cache.delete(k));
     for (const [k, p] of cache) if (Math.abs(k - i) > 6) { cache.delete(k); p.then(URL.revokeObjectURL).catch(() => {}); }
