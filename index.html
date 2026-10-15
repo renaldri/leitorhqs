@@ -57,6 +57,22 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
 #sc{margin-right:auto;font-weight:600}
 .selmode #shelf{padding-bottom:120px}
 
+/* Modo lista (sem capas) */
+#shelf.list{display:flex;flex-direction:column;gap:6px;padding:12px 20px 40px}
+.list .card{display:flex;align-items:center;gap:8px;background:var(--card);border:2px solid var(--ink);border-radius:6px;padding:4px 8px}
+.list .card:hover{border-color:var(--acc)}
+.list .card[data-sel]{box-shadow:0 0 0 3px var(--acc)}
+.list .open{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:6px 4px}
+.list .rn{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.list .sz,.list .pr{flex:none;font-size:12px;color:var(--mut)}
+.list .pr{min-width:70px;text-align:right}
+.list .pr.on{color:var(--acc)}
+.list .acts{margin:0;flex:none}
+.list .act{flex:none;padding:4px 10px}
+.selmode #shelf.list .rn::before{content:'○ ';color:var(--acc)}
+.selmode #shelf.list .card[data-sel] .rn::before{content:'✓ '}
+@media(max-width:560px){.list .card{flex-wrap:wrap}.list .acts{width:100%}.list .act{flex:1}}
+
 /* Leitor */
 #rd{position:fixed;inset:0;background:var(--rd);display:none;z-index:10;flex-direction:column}
 #rd.on{display:flex}
@@ -113,6 +129,7 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
   <h1>Prateleira de HQs</h1>
   <input id="q" type="search" placeholder="Buscar quadrinho" aria-label="Buscar quadrinho">
   <button id="selbtn" hidden>Selecionar</button>
+  <button id="lay" hidden title="Alternar entre capas e lista simples">Visual: capas</button>
   <button id="pick" hidden>Escolher pasta</button>
   <button id="reload" hidden>Atualizar lista</button>
   <button class="themebtn" title="Alternar tema">Tema</button>
@@ -310,7 +327,7 @@ window.addEventListener('load', () => {
 });
 const msg = t => $('#msg').textContent = t;
 function ui(on) {
-  ['#reload', '#pick', '#selbtn', '#logout'].forEach(s => $(s).hidden = !on);
+  ['#reload', '#pick', '#selbtn', '#lay', '#logout'].forEach(s => $(s).hidden = !on);
   $('#login').hidden = on;
 }
 $('#login').onclick = async () => {
@@ -534,16 +551,18 @@ const obs = new IntersectionObserver(es => es.forEach(e => {
 function draw() {
   drawCats(); updSb();
   const sh = $('#shelf'); sh.innerHTML = ''; wait = [];
+  const lst = ls.get('lay') === 'list'; sh.classList.toggle('list', lst);
   const list = visible();
   if (files.length) msg(list.length ? '' : (view === 'all' ? 'Nenhum resultado para a busca.' : 'Nada aqui ainda. Use "Selecionar" ou os botões dos quadrinhos para adicionar.'));
   list.forEach(f => {
     const c = document.createElement('div'); c.className = 'card'; c.f = f;
     if (sel.has(f.id)) c.toggleAttribute('data-sel', true);
     const p = jget('p:' + f.id, null);
-    c.innerHTML = `<button class="open"><div class="cov"><span class="ph">${ext(f.name).toUpperCase()}</span>${p ? `<i class="bar" style="width:${Math.round((p.i + 1) / p.n * 100)}%"></i>` : ''}</div>
+    c.innerHTML = lst ? `<button class="open"><span class="rn"></span><span class="sz">${mb(+f.size)}</span><span class="pr${p ? ' on' : ''}">${p ? 'Lido ' + Math.round((p.i + 1) / p.n * 100) + '%' : ''}</span></button>
+      <div class="acts"><button class="act" data-a="later"></button><button class="act" data-a="cat">Categorias</button></div>` : `<button class="open"><div class="cov"><span class="ph">${ext(f.name).toUpperCase()}</span>${p ? `<i class="bar" style="width:${Math.round((p.i + 1) / p.n * 100)}%"></i>` : ''}</div>
       <div class="nm"></div><div class="sz">${mb(+f.size)}</div></button>
       <div class="acts"><button class="act" data-a="later"></button><button class="act" data-a="cat">Categorias</button></div>`;
-    c.querySelector('.nm').textContent = f.name.replace(/\.[^.]+$/, '');
+    c.querySelector('.nm,.rn').textContent = f.name.replace(/\.[^.]+$/, '');
     const lb = c.querySelector('[data-a=later]');
     const paintLater = () => { const on = later.has(f.id); lb.textContent = on ? '✓ Vou ler' : '+ Vou ler'; lb.setAttribute('aria-pressed', on); };
     paintLater();
@@ -554,10 +573,13 @@ function draw() {
       sel.has(f.id) ? sel.delete(f.id) : sel.add(f.id);
       c.toggleAttribute('data-sel', sel.has(f.id)); updSb();
     };
-    sh.append(c); obs.observe(c); queue(c);
+    sh.append(c); if (!lst) { obs.observe(c); queue(c); }
   });
 }
 $('#q').oninput = draw;
+const paintLay = () => $('#lay').textContent = 'Visual: ' + (ls.get('lay') === 'list' ? 'lista' : 'capas');
+$('#lay').onclick = () => { ls.set('lay', ls.get('lay') === 'list' ? 'grid' : 'list'); paintLay(); draw(); };
+paintLay();
 
 /* capas: carregam sozinhas, as visíveis primeiro; ficam guardadas */
 function showCover(c, src, onfail, onok) {
