@@ -283,7 +283,10 @@ async function rarBook(data) {
   const names = [...ex.getFileList().fileHeaders].filter(h => !h.flags.directory && IMG.test(h.name)).map(h => h.name).sort(nat);
   return {n: names.length, get: async i => {
     const fl = [...ex.extract({files: [names[i]]}).files][0];
-    return URL.createObjectURL(new Blob([fl.extraction.data], {type: mime(names[i])}));
+    // na v2 'extraction' já é o Uint8Array; versões antigas usavam extraction.data
+    const bytes = fl && (fl.extraction instanceof Uint8Array ? fl.extraction : fl.extraction?.data);
+    if (!bytes || !bytes.length) throw new Error('não foi possível extrair a página do CBR');
+    return URL.createObjectURL(new Blob([bytes], {type: mime(names[i])}));
   }};
 }
 function pdfPages(doc) {
