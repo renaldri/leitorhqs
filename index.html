@@ -76,9 +76,25 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
 #pg.two.rtl #im2{object-position:right center}
 #pg.w{align-items:flex-start}
 #pg.w img{height:auto;object-fit:initial}
+/* Zoom personalizado: tamanho em pixels definido pelo script; margens automáticas centralizam sem cortar a rolagem */
+#pg.cz{align-items:flex-start;justify-content:flex-start}
+#pg.cz img{margin-top:auto;margin-bottom:auto}
+#pg.cz #im{margin-left:auto;margin-right:auto}
+#pg.cz.two #im{margin-left:auto;margin-right:0}
+#pg.cz.two #im2{margin-left:0;margin-right:auto}
+#pg.cz.two.rtl #im{margin-left:0;margin-right:auto}
+#pg.cz.two.rtl #im2{margin-left:auto;margin-right:0}
+#pg.cz,#stage.cz .z,#pg.lp,#stage.lupa .z{touch-action:none}
+#stage.lupa,#stage.lupa .z{cursor:crosshair}
 .z{position:absolute;top:0;bottom:0;width:33%;z-index:2;cursor:pointer}
 #zl{left:0}#zr{right:0}
 #ld{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:var(--acc);pointer-events:none;z-index:3;padding:0 16px;text-shadow:0 0 6px #000,0 0 6px #000}
+
+/* Controles de zoom e lupa */
+.zg{display:inline-flex;gap:4px;align-items:center}
+.zg button{padding:6px 11px}
+#zv{width:68px;min-width:0;padding:6px;text-align:center}
+#lens{position:fixed;display:none;border-radius:50%;border:3px solid var(--acc);box-shadow:0 4px 18px rgba(0,0,0,.6);background-color:#000;background-repeat:no-repeat;pointer-events:none;z-index:30}
 
 /* Janelas */
 #fp,#cp{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;z-index:20;place-items:center}
@@ -136,6 +152,14 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
     <button id="x">Fechar</button><span id="tt"></span><span id="ct"></span>
     <button id="dbl" title="Mostrar duas páginas lado a lado (tecla D)">Página dupla: desligada</button>
     <button id="fit" title="Alternar ajuste">Ajuste: altura</button>
+    <span class="zg" title="Zoom em % (100% = página inteira na tela). Teclas + e −. Fica salvo para esta HQ.">
+      <button id="zo" aria-label="Diminuir zoom">−</button>
+      <input id="zv" type="number" min="20" max="500" step="5" value="100" aria-label="Zoom em porcentagem">
+      <span>%</span>
+      <button id="zi" aria-label="Aumentar zoom">+</button>
+    </span>
+    <button id="lupa" title="Passe o cursor sobre o balão para ampliar (tecla L)">Lupa: desligada</button>
+    <button id="lzb" hidden title="Nível de ampliação da lupa">Ampliação: 3×</button>
     <button id="dir" title="Sentido de leitura">Esq → Dir</button>
     <button class="themebtn" title="Alternar tema">Tema</button>
     <button id="fs">Tela cheia</button>
@@ -145,6 +169,7 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
     <div class="z" id="zl"></div><div class="z" id="zr"></div>
     <div id="ld"></div>
   </div>
+  <div id="lens"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.34/dist/zip.min.js"></script>
@@ -656,11 +681,104 @@ const paintDir = () => { $('#dir').textContent = rtl ? 'Dir → Esq' : 'Esq → 
 const paintDbl = () => { $('#dbl').textContent = 'Página dupla: ' + (dbl ? 'ligada' : 'desligada'); };
 paintDir(); paintDbl();
 
+/* ----- Ajuste / zoom (salvo por HQ) -----
+   vmode: 'h' = altura, 'w' = largura, 'z' = zoom em %.
+   100% = a página inteira cabendo na tela (mesmo tamanho do ajuste por altura). */
+let vmode = 'h', vz = 100, curDims = null;
+const ZMIN = 20, ZMAX = 500;
+const saveView = () => { if (cur) ls.set('z:' + cur.id, JSON.stringify({m: vmode, z: vz})); };
+function baseScale() {
+  const pg = $('#pg'), d = curDims; if (!d) return 0;
+  const tw = d.w1 + (d.two ? d.w2 : 0), mh = d.two ? Math.max(d.h1, d.h2) : d.h1;
+  return Math.min(pg.clientWidth / tw, pg.clientHeight / mh);
+}
+function effPct() { // % equivalente ao ajuste atual (para o zoom partir de onde você está)
+  const d = curDims, b = baseScale(); if (!d || !b) return 100;
+  if (vmode === 'z') return vz;
+  if (vmode === 'h') return 100;
+  const tw = d.w1 + (d.two ? d.w2 : 0);
+  return Math.min(ZMAX, Math.max(ZMIN, Math.round($('#pg').clientWidth / tw / b * 100)));
+}
+function applyView(keep) {
+  const pg = $('#pg'), z = vmode === 'z';
+  let cx = .5, cy = .5;
+  if (keep && pg.scrollWidth && pg.scrollHeight) {
+    cx = (pg.scrollLeft + pg.clientWidth / 2) / pg.scrollWidth;
+    cy = (pg.scrollTop + pg.clientHeight / 2) / pg.scrollHeight;
+  }
+  pg.classList.toggle('w', vmode === 'w');
+  pg.classList.toggle('cz', z); $('#stage').classList.toggle('cz', z);
+  const d = curDims, b = baseScale();
+  if (z && d && b) {
+    const s = b * vz / 100;
+    im.style.width = Math.floor(d.w1 * s) + 'px'; im.style.height = Math.floor(d.h1 * s) + 'px';
+    if (d.two) { im2.style.width = Math.floor(d.w2 * s) + 'px'; im2.style.height = Math.floor(d.h2 * s) + 'px'; }
+    else { im2.style.width = im2.style.height = ''; }
+  } else {
+    im.style.width = im.style.height = im2.style.width = im2.style.height = '';
+  }
+  $('#fit').textContent = 'Ajuste: ' + (z ? 'zoom' : vmode === 'w' ? 'largura' : 'altura');
+  $('#zv').value = effPct();
+  if (keep && z) {
+    pg.scrollLeft = cx * pg.scrollWidth - pg.clientWidth / 2;
+    pg.scrollTop = cy * pg.scrollHeight - pg.clientHeight / 2;
+  }
+  updLens();
+}
+function setZoom(p) {
+  p = Math.round(+p); if (!isFinite(p)) return applyView(true);
+  vz = Math.min(ZMAX, Math.max(ZMIN, p));
+  const wasZ = vmode === 'z'; vmode = 'z'; saveView(); applyView(wasZ);
+}
+const zoomStep = d => setZoom((vmode === 'z' ? vz : Math.round(effPct() / 10) * 10) + d * 10);
+
+/* ----- Lupa ----- */
+const LENS = $('#lens'), LF = [2, 3, 4, 5];
+let lupa = ls.get('lupa') === '1', lz = LF.includes(+ls.get('lz')) ? +ls.get('lz') : 3, lp = null;
+const LSZ = () => Math.max(140, Math.min(240, Math.round(Math.min(innerWidth, innerHeight) * .45)));
+function paintLupa() {
+  $('#lupa').textContent = 'Lupa: ' + (lupa ? 'ligada' : 'desligada');
+  $('#lzb').hidden = !lupa; $('#lzb').textContent = 'Ampliação: ' + lz + '×';
+  $('#stage').classList.toggle('lupa', lupa); $('#pg').classList.toggle('lp', lupa);
+  updLens();
+}
+// área real onde a imagem aparece na tela (considera object-fit: contain)
+function rectOf(img) {
+  if (!img.getAttribute('src') || getComputedStyle(img).display === 'none') return null;
+  const nw = img.naturalWidth, nh = img.naturalHeight; if (!nw || !nh) return null;
+  const b = img.getBoundingClientRect(), s = Math.min(b.width / nw, b.height / nh), cw = nw * s, ch = nh * s;
+  const pos = getComputedStyle(img).objectPosition.split(' ');
+  const px = parseFloat(pos[0]) / 100, py = parseFloat(pos[1]) / 100;
+  return {img, w: cw, h: ch, l: b.left + (b.width - cw) * (isNaN(px) ? .5 : px), t: b.top + (b.height - ch) * (isNaN(py) ? .5 : py)};
+}
+function updLens() {
+  if (!lupa || !lp || !bk) { LENS.style.display = 'none'; return; }
+  const r = [rectOf(im), rectOf(im2)].filter(Boolean).find(r => lp.x >= r.l && lp.x <= r.l + r.w && lp.y >= r.t && lp.y <= r.t + r.h);
+  if (!r) { LENS.style.display = 'none'; return; }
+  const L = LSZ(), off = lp.touch ? -(L / 2 + 50) : 0;
+  Object.assign(LENS.style, {
+    display: 'block', width: L + 'px', height: L + 'px',
+    left: (lp.x - L / 2) + 'px', top: (lp.y - L / 2 + off) + 'px',
+    backgroundImage: `url("${r.img.src}")`,
+    backgroundSize: `${r.w * lz}px ${r.h * lz}px`,
+    backgroundPosition: `${L / 2 - (lp.x - r.l) * lz}px ${L / 2 - (lp.y - r.t) * lz}px`
+  });
+}
+im.addEventListener('load', updLens); im2.addEventListener('load', updLens);
+const toggleLupa = () => { lupa = !lupa; ls.set('lupa', lupa ? '1' : '0'); paintLupa(); };
+$('#lupa').onclick = toggleLupa;
+$('#lzb').onclick = () => { lz = LF[(LF.indexOf(lz) + 1) % LF.length]; ls.set('lz', String(lz)); paintLupa(); };
+paintLupa();
+
 async function openBook(f) {
   cur = f; const my = ++token;
   $('#rd').classList.add('on'); $('#tt').textContent = f.name; $('#ct').textContent = '';
   im.removeAttribute('src'); im2.removeAttribute('src'); $('#pg').classList.remove('two');
-  $('#ld').textContent = 'Abrindo…'; bk = null;
+  $('#ld').textContent = 'Abrindo…'; bk = null; lp = null; updLens();
+  const sv = jget('z:' + f.id, null); // ajuste/zoom desta HQ
+  vmode = sv && ['h', 'w', 'z'].includes(sv.m) ? sv.m : 'h';
+  vz = sv && sv.z >= ZMIN && sv.z <= ZMAX ? Math.round(sv.z) : 100;
+  curDims = null; applyView();
   cache.forEach(p => p.then(URL.revokeObjectURL).catch(() => {})); cache.clear();
   try {
     const b = await makeBook(f); if (my !== token) return;
@@ -683,20 +801,21 @@ async function show(i, exact) {
   idx = i;
   const want2 = dbl && i > 0 && i + 1 < b.n;
   $('#ct').textContent = `${i + 1} / ${b.n}`; $('#ld').textContent = 'Carregando página…';
+  LENS.style.display = 'none';
   try {
     const [u1, u2] = await Promise.all([page(i), want2 ? page(i + 1) : null]);
     if (my !== token || i !== idx) return;
-    let two = false;
-    if (want2) {
-      const [a, c] = await Promise.all([dims(u1), dims(u2)]);
-      if (my !== token || i !== idx) return;
-      two = a.w <= a.h && c.w <= c.h; // página larga (paisagem) fica sozinha
-    }
+    const [a, c] = await Promise.all([dims(u1), want2 ? dims(u2) : null]);
+    if (my !== token || i !== idx) return;
+    const two = !!c && a.w <= a.h && c.w <= c.h; // página larga (paisagem) fica sozinha
     span = two ? 2 : 1;
+    curDims = {w1: a.w, h1: a.h, w2: two ? c.w : 0, h2: two ? c.h : 0, two};
     $('#pg').classList.toggle('two', two);
+    applyView();
     im.src = u1; if (two) im2.src = u2; else im2.removeAttribute('src');
     $('#ct').textContent = two ? `${i + 1}–${i + 2} / ${b.n}` : `${i + 1} / ${b.n}`;
     $('#ld').textContent = ''; $('#pg').scrollTop = 0;
+    $('#pg').scrollLeft = (vmode === 'z' && rtl) ? 1e6 : 0;
     ls.set('p:' + cur.id, JSON.stringify({i: i + span - 1, n: b.n, t: Date.now()})); push();
     if (i === 0) idb.get('c:' + cur.id).then(v => v || thumb(u1).then(d => idb.set('c:' + cur.id, d))).catch(() => {});
     for (let k = i + span; k < i + span + 4; k++) if (k < b.n) page(k).catch(() => cache.delete(k));
@@ -709,30 +828,72 @@ function go(d) {
   else if (idx > 0) show(idx - 1);
 }
 const closeRd = () => {
-  token++; $('#rd').classList.remove('on'); bk = null; im.removeAttribute('src'); im2.removeAttribute('src');
+  token++; $('#rd').classList.remove('on'); bk = null; lp = null; updLens(); im.removeAttribute('src'); im2.removeAttribute('src');
   cache.forEach(p => p.then(URL.revokeObjectURL).catch(() => {})); cache.clear();
   if (document.fullscreenElement) document.exitFullscreen();
   draw(); pump();
 };
 $('#x').onclick = closeRd;
-$('#zl').onclick = () => go(rtl ? 1 : -1);
-$('#zr').onclick = () => go(rtl ? -1 : 1);
-$('#fit').onclick = e => { const w = $('#pg').classList.toggle('w'); e.target.textContent = 'Ajuste: ' + (w ? 'largura' : 'altura'); };
-$('#dir').onclick = () => { rtl = !rtl; ls.set('rtl', rtl ? '1' : '0'); paintDir(); };
+let pan = null, panMoved = false;
+const zone = d => () => { if (panMoved) { panMoved = false; return; } go(d); };
+$('#zl').onclick = e => zone(rtl ? 1 : -1)(e);
+$('#zr').onclick = e => zone(rtl ? -1 : 1)(e);
+$('#fit').onclick = () => { vmode = vmode === 'h' ? 'w' : 'h'; saveView(); applyView(); };
+$('#zo').onclick = () => zoomStep(-1);
+$('#zi').onclick = () => zoomStep(1);
+$('#zv').onchange = e => setZoom(e.target.value);
+$('#dir').onclick = () => { rtl = !rtl; ls.set('rtl', rtl ? '1' : '0'); paintDir(); applyView(); };
 $('#dbl').onclick = () => { dbl = !dbl; ls.set('dbl', dbl ? '1' : '0'); paintDbl(); if (bk) show(idx); };
 $('#fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : $('#rd').requestFullscreen?.();
+window.addEventListener('resize', () => { if ($('#rd').classList.contains('on')) applyView(true); });
 document.addEventListener('keydown', e => {
   if (!$('#rd').classList.contains('on')) return;
+  if (e.target.tagName === 'INPUT') { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur(); return; }
   if (e.key === 'ArrowRight') go(rtl ? -1 : 1);
   else if (e.key === 'ArrowLeft') go(rtl ? 1 : -1);
   else if (e.key === ' ') { e.preventDefault(); go(1); }
   else if (e.key === 'Escape') closeRd();
   else if (e.key === 'f') $('#fs').click();
   else if (e.key === 'd') $('#dbl').click();
+  else if (e.key === 'l') toggleLupa();
+  else if (e.key === '+' || e.key === '=') zoomStep(1);
+  else if (e.key === '-') zoomStep(-1);
+  else if (e.key === '0') { vmode = 'h'; saveView(); applyView(); }
 });
+
+/* arrastar para mover a página quando há zoom; rolagem do mouse também; lupa segue o cursor/dedo */
+const overflow = () => { const p = $('#pg'); return p.scrollWidth > p.clientWidth + 1 || p.scrollHeight > p.clientHeight + 1; };
+const stage = $('#stage');
+stage.addEventListener('pointerdown', e => {
+  lp = {x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse'}; updLens();
+  if (vmode !== 'z' || !overflow() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  panMoved = false; const p = $('#pg');
+  pan = {x: e.clientX, y: e.clientY, sl: p.scrollLeft, st: p.scrollTop, id: e.pointerId};
+});
+stage.addEventListener('pointermove', e => {
+  lp = {x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse'};
+  if (pan && e.pointerId === pan.id) {
+    const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+    if (!panMoved && Math.hypot(dx, dy) > 6) { panMoved = true; try { stage.setPointerCapture(e.pointerId); } catch {} }
+    if (panMoved) { const p = $('#pg'); p.scrollLeft = pan.sl - dx; p.scrollTop = pan.st - dy; }
+  }
+  updLens();
+});
+const endPtr = e => { pan = null; if (e.pointerType !== 'mouse' || e.type === 'pointerleave') { lp = null; updLens(); } };
+stage.addEventListener('pointerup', endPtr);
+stage.addEventListener('pointercancel', endPtr);
+stage.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { lp = null; updLens(); } });
+stage.addEventListener('wheel', e => {
+  if (vmode !== 'z' || !overflow()) return;
+  e.preventDefault(); $('#pg').scrollBy(e.deltaX, e.deltaY);
+}, {passive: false});
+$('#pg').addEventListener('scroll', updLens, {passive: true});
+
 let sx = 0;
 $('#pg').addEventListener('touchstart', e => sx = e.touches[0].clientX, {passive: true});
 $('#pg').addEventListener('touchend', e => {
+  const p = $('#pg');
+  if (vmode === 'z' && p.scrollWidth > p.clientWidth + 1) return; // com zoom, o arrasto move a página em vez de virar
   const d = e.changedTouches[0].clientX - sx;
   if (Math.abs(d) > 60) go((d < 0) !== rtl ? 1 : -1);
 }, {passive: true});
