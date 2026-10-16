@@ -1,7 +1,7 @@
 /* Service worker da Prateleira de HQs.
    Guarda só a "casca" do app (HTML, ícones, bibliotecas). Drive, login do Google
    e arquivos de HQ NUNCA passam pelo cache. Para forçar atualização, mude VERSAO. */
-const VERSAO = 'hq-v1';
+const VERSAO = 'hq-v2';
 const CDNS = ['cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 const CASCA = ['./', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
