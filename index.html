@@ -104,7 +104,7 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
 #pg.cz.two #im2{margin-left:0;margin-right:auto}
 #pg.cz.two.rtl #im{margin-left:0;margin-right:auto}
 #pg.cz.two.rtl #im2{margin-left:auto;margin-right:0}
-#pg.cz,#stage.cz .z,#pg.lp,#stage.lupa .z{touch-action:none}
+#stage,#pg,#stage .z{touch-action:none}
 #stage.lupa,#stage.lupa .z{cursor:crosshair}
 .z{position:absolute;top:0;bottom:0;width:33%;z-index:2;cursor:pointer}
 #zl{left:0}#zr{right:0}
@@ -115,6 +115,24 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
 .zg button{padding:6px 11px}
 #zv{width:68px;min-width:0;padding:6px;text-align:center}
 #lens{position:fixed;display:none;border-radius:50%;border:3px solid var(--acc);box-shadow:0 4px 18px rgba(0,0,0,.6);background-color:#000;background-repeat:no-repeat;pointer-events:none;z-index:30}
+
+/* Leitor limpo (tela cheia): barra some e reaparece com toque no centro */
+#zc{left:33%;width:34%;cursor:default}
+#mini{position:absolute;right:10px;bottom:8px;z-index:3;padding:2px 10px;border-radius:99px;background:rgba(0,0,0,.5);color:#fff;font-size:12px;pointer-events:none;display:none}
+#rd.imm #top{position:absolute;left:0;right:0;top:0;z-index:8;box-shadow:0 4px 14px rgba(0,0,0,.5);transition:transform .18s}
+#rd.imm:not(.bar) #top{transform:translateY(-110%);visibility:hidden}
+#rd.imm:not(.bar) #mini{display:block}
+
+/* Celular: barra de uma linha só, deslizável */
+@media(max-width:700px){
+  #top{flex-wrap:nowrap;overflow-x:auto;gap:6px;padding:6px 8px;scrollbar-width:none}
+  #top::-webkit-scrollbar{display:none}
+  #top button,#top input{flex:none;white-space:nowrap;font-size:13px;padding:6px 9px}
+  #tt{flex:none;max-width:30vw}
+  #ct{flex:none;white-space:nowrap;font-size:13px}
+  .zg{flex:none}
+  #zv{width:56px}
+}
 
 /* Janelas */
 #fp,#cp{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;z-index:20;place-items:center}
@@ -187,8 +205,8 @@ button:disabled:hover{background:var(--card);color:var(--txt)}
   </div>
   <div id="stage">
     <div id="pg"><img id="im" alt=""><img id="im2" alt=""></div>
-    <div class="z" id="zl"></div><div class="z" id="zr"></div>
-    <div id="ld"></div>
+    <div class="z" id="zl"></div><div class="z" id="zr"></div><div class="z" id="zc"></div>
+    <div id="ld"></div><div id="mini"></div>
   </div>
   <div id="lens"></div>
 </div>
@@ -720,7 +738,7 @@ function baseScale() {
 }
 function effPct() { // % equivalente ao ajuste atual (para o zoom partir de onde você está)
   const d = curDims, b = baseScale(); if (!d || !b) return 100;
-  if (vmode === 'z') return vz;
+  if (vmode === 'z') return Math.round(vz);
   if (vmode === 'h') return 100;
   const tw = d.w1 + (d.two ? d.w2 : 0);
   return Math.min(ZMAX, Math.max(ZMIN, Math.round($('#pg').clientWidth / tw / b * 100)));
@@ -797,6 +815,7 @@ $('#lzb').onclick = () => { lz = LF[(LF.indexOf(lz) + 1) % LF.length]; ls.set('l
 paintLupa();
 
 async function openBook(f) {
+  try { if (!(history.state && history.state.rd)) history.pushState({rd: 1}, ''); } catch {}
   cur = f; const my = ++token;
   $('#rd').classList.add('on'); $('#tt').textContent = f.name; $('#ct').textContent = '';
   im.removeAttribute('src'); im2.removeAttribute('src'); $('#pg').classList.remove('two');
@@ -853,24 +872,39 @@ function go(d) {
   if (d > 0) { if (idx + span < bk.n) show(idx + span, true); }
   else if (idx > 0) show(idx - 1);
 }
-const closeRd = () => {
+const closeRd = fromPop => {
+  if (!fromPop && history.state && history.state.rd) { history.back(); return; } // botão voltar do Android fecha o leitor
   token++; $('#rd').classList.remove('on'); bk = null; lp = null; updLens(); im.removeAttribute('src'); im2.removeAttribute('src');
   cache.forEach(p => p.then(URL.revokeObjectURL).catch(() => {})); cache.clear();
-  if (document.fullscreenElement) document.exitFullscreen();
+  exitImm();
   draw(); pump();
 };
-$('#x').onclick = closeRd;
+$('#x').onclick = () => closeRd();
 let pan = null, panMoved = false;
 const zone = d => () => { if (panMoved) { panMoved = false; return; } go(d); };
 $('#zl').onclick = e => zone(rtl ? 1 : -1)(e);
 $('#zr').onclick = e => zone(rtl ? -1 : 1)(e);
+// centro: 1 toque mostra/esconde a barra (tela cheia); 2 toques alternam zoom
+let tapT = 0, tapX = 0, tapY = 0, tapTimer = null;
+$('#zc').onclick = e => {
+  if (panMoved) { panMoved = false; return; }
+  const now = Date.now();
+  if (tapTimer && now - tapT < 320 && Math.hypot(e.clientX - tapX, e.clientY - tapY) < 40) {
+    clearTimeout(tapTimer); tapTimer = null;
+    if ((vmode === 'z' ? vz : effPct()) < 150) { zoomAt(250, e.clientX, e.clientY); vz = 250; }
+    else vmode = 'h';
+    saveView(); applyView(); return;
+  }
+  tapT = now; tapX = e.clientX; tapY = e.clientY;
+  tapTimer = setTimeout(() => { tapTimer = null; if (rd.classList.contains('imm')) toggleBar(); }, 300);
+};
 $('#fit').onclick = () => { vmode = vmode === 'h' ? 'w' : 'h'; saveView(); applyView(); };
 $('#zo').onclick = () => zoomStep(-1);
 $('#zi').onclick = () => zoomStep(1);
 $('#zv').onchange = e => setZoom(e.target.value);
 $('#dir').onclick = () => { rtl = !rtl; ls.set('rtl', rtl ? '1' : '0'); paintDir(); applyView(); };
 $('#dbl').onclick = () => { dbl = !dbl; ls.set('dbl', dbl ? '1' : '0'); paintDbl(); if (bk) show(idx); };
-$('#fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : $('#rd').requestFullscreen?.();
+$('#fs').onclick = () => rd.classList.contains('imm') ? exitImm() : enterImm();
 window.addEventListener('resize', () => { if ($('#rd').classList.contains('on')) applyView(true); });
 document.addEventListener('keydown', e => {
   if (!$('#rd').classList.contains('on')) return;
@@ -887,16 +921,72 @@ document.addEventListener('keydown', e => {
   else if (e.key === '0') { vmode = 'h'; saveView(); applyView(); }
 });
 
-/* arrastar para mover a página quando há zoom; rolagem do mouse também; lupa segue o cursor/dedo */
+/* ----- Tela cheia limpa ----- */
+const rd = $('#rd'); let barT = null, usedFs = false;
+function showBar() { if (!rd.classList.contains('imm')) return; rd.classList.add('bar'); clearTimeout(barT); barT = setTimeout(hideBar, 4500); }
+function hideBar() { clearTimeout(barT); rd.classList.remove('bar'); }
+const toggleBar = () => rd.classList.contains('bar') ? hideBar() : showBar();
+function enterImm() {
+  rd.classList.add('imm'); hideBar(); $('#fs').textContent = 'Sair da tela cheia';
+  if (rd.requestFullscreen && !document.fullscreenElement) rd.requestFullscreen().then(() => usedFs = true).catch(() => {});
+  applyView(true);
+}
+function exitImm() {
+  const was = rd.classList.contains('imm');
+  rd.classList.remove('imm', 'bar'); $('#fs').textContent = 'Tela cheia'; usedFs = false;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (was) applyView(true);
+}
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && usedFs && rd.classList.contains('imm')) exitImm();
+  setTimeout(() => applyView(true), 60);
+});
+$('#top').addEventListener('pointerdown', () => { if (rd.classList.contains('bar')) showBar(); });
+$('#top').addEventListener('keydown', () => { if (rd.classList.contains('bar')) showBar(); });
+window.addEventListener('popstate', () => { if (rd.classList.contains('on')) closeRd(true); });
+new MutationObserver(() => $('#mini').textContent = $('#ct').textContent)
+  .observe($('#ct'), {childList: true, characterData: true, subtree: true});
+
+/* ----- Gestos: arrastar, pinça, duplo toque, lupa, roda do mouse ----- */
 const overflow = () => { const p = $('#pg'); return p.scrollWidth > p.clientWidth + 1 || p.scrollHeight > p.clientHeight + 1; };
-const stage = $('#stage');
+const stage = $('#stage'), ptrs = new Map(); let pinch = null, wt = null;
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) || 1;
+function pageRect() { // área real ocupada pela(s) página(s) na tela
+  const rs = [rectOf(im), rectOf(im2)].filter(Boolean); if (!rs.length) return null;
+  const l = Math.min(...rs.map(r => r.l)), t = Math.min(...rs.map(r => r.t));
+  return {l, t, w: Math.max(...rs.map(r => r.l + r.w)) - l, h: Math.max(...rs.map(r => r.t + r.h)) - t};
+}
+function zoomAt(z, mx, my) { // muda o zoom mantendo o ponto (mx,my) da tela parado
+  const r0 = pageRect(); if (!r0 || !curDims) return;
+  const u = (mx - r0.l) / r0.w, v = (my - r0.t) / r0.h;
+  vz = Math.min(ZMAX, Math.max(ZMIN, z)); vmode = 'z'; applyView(false);
+  const r1 = pageRect(), p = $('#pg'); if (!r1) return;
+  p.scrollLeft += r1.l + u * r1.w - mx; p.scrollTop += r1.t + v * r1.h - my;
+}
 stage.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse') ptrs.clear();
+  ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (ptrs.size === 2) {
+    pan = null; panMoved = true; lp = null; updLens();
+    const [a, b] = [...ptrs.values()];
+    pinch = {d0: dist(a, b), z0: vmode === 'z' ? vz : effPct()};
+    return;
+  }
+  if (ptrs.size > 2) return;
+  panMoved = false;
   lp = {x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse'}; updLens();
-  if (vmode !== 'z' || !overflow() || (e.pointerType === 'mouse' && e.button !== 0)) return;
-  panMoved = false; const p = $('#pg');
+  if (!overflow() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  const p = $('#pg');
   pan = {x: e.clientX, y: e.clientY, sl: p.scrollLeft, st: p.scrollTop, id: e.pointerId};
 });
 stage.addEventListener('pointermove', e => {
+  if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (e.pointerType === 'mouse' && e.clientY < 50) showBar(); // mouse no topo mostra a barra (tela cheia)
+  if (pinch && ptrs.size >= 2) {
+    const [a, b] = [...ptrs.values()];
+    zoomAt(pinch.z0 * dist(a, b) / pinch.d0, (a.x + b.x) / 2, (a.y + b.y) / 2);
+    return;
+  }
   lp = {x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse'};
   if (pan && e.pointerId === pan.id) {
     const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
@@ -905,21 +995,32 @@ stage.addEventListener('pointermove', e => {
   }
   updLens();
 });
-const endPtr = e => { pan = null; if (e.pointerType !== 'mouse' || e.type === 'pointerleave') { lp = null; updLens(); } };
+const endPtr = e => {
+  ptrs.delete(e.pointerId); pan = null;
+  if (pinch && ptrs.size < 2) { pinch = null; vz = Math.round(vz); saveView(); $('#zv').value = vz; }
+  if (e.pointerType !== 'mouse') { lp = null; updLens(); }
+};
 stage.addEventListener('pointerup', endPtr);
 stage.addEventListener('pointercancel', endPtr);
-stage.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { lp = null; updLens(); } });
+stage.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { ptrs.delete(e.pointerId); lp = null; updLens(); } });
 stage.addEventListener('wheel', e => {
-  if (vmode !== 'z' || !overflow()) return;
+  if (e.ctrlKey) { // pinça do touchpad / Ctrl + roda
+    e.preventDefault();
+    zoomAt((vmode === 'z' ? vz : effPct()) * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+    clearTimeout(wt); wt = setTimeout(() => { vz = Math.round(vz); saveView(); $('#zv').value = vz; }, 250);
+    return;
+  }
+  if (!overflow()) return;
   e.preventDefault(); $('#pg').scrollBy(e.deltaX, e.deltaY);
 }, {passive: false});
 $('#pg').addEventListener('scroll', updLens, {passive: true});
 
-let sx = 0;
-$('#pg').addEventListener('touchstart', e => sx = e.touches[0].clientX, {passive: true});
+let sx = 0, multi = false;
+$('#pg').addEventListener('touchstart', e => { if (e.touches.length > 1) multi = true; else { multi = false; sx = e.touches[0].clientX; } }, {passive: true});
 $('#pg').addEventListener('touchend', e => {
   const p = $('#pg');
-  if (vmode === 'z' && p.scrollWidth > p.clientWidth + 1) return; // com zoom, o arrasto move a página em vez de virar
+  if (multi) return; // pinça não vira página
+  if (p.scrollWidth > p.clientWidth + 1) return; // com zoom, o arrasto move a página em vez de virar
   const d = e.changedTouches[0].clientX - sx;
   if (Math.abs(d) > 60) go((d < 0) !== rtl ? 1 : -1);
 }, {passive: true});
