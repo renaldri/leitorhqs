@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>Prateleira de HQs</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1e2238">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <script>try{var t=localStorage.getItem('theme');if(t==='light'||t==='sepia')document.documentElement.dataset.theme=t}catch(e){}</script>
 <link href="https://fonts.googleapis.com/css2?family=Bangers&display=swap" rel="stylesheet">
 <style>
@@ -919,6 +923,9 @@ $('#pg').addEventListener('touchend', e => {
   const d = e.changedTouches[0].clientX - sx;
   if (Math.abs(d) > 60) go((d < 0) !== rtl ? 1 : -1);
 }, {passive: true});
+
+/* ---------- App instalável (PWA) ---------- */
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW:', e)));
 </script>
 </body>
 </html>
